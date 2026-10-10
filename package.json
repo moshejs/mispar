@@ -1,6 +1,6 @@
 {
   "name": "mispar",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Hebrew gematria with all the classical methods — hechrachi, gadol, katan, siduri, katan mispari, perati, meshulash, kidmi, bone'eh, ha'akhor, milui, atbash, albam — plus Hebrew numerals (ה׳תשפ״ו) both ways. Zero dependencies.",
   "keywords": [
     "gematria",
