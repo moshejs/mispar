@@ -8,7 +8,8 @@
  *
  * Niqqud and cantillation marks are stripped automatically; final letters
  * are handled per method. Non-Hebrew characters are ignored unless
- * `strict: true`.
+ * `strict: true`. Also converts numbers to and from Hebrew numerals
+ * (hebrewNumeral / parseHebrewNumeral).
  */
 
 export type Method =
@@ -20,7 +21,7 @@ export type Method =
   | "perati" // each letter squared
   | "meshulash" // each letter cubed
   | "kidmi" // cumulative: each letter = sum of standard values up to it
-  | "boneeh" // building: running total re-added at each letter
+  | "boneeh" // building: running total re-added at each letter of a word
   | "haakhor" // positional: value × position within the word
   | "milui" // full spelling: value of each letter's spelled-out name
   | "atbash" // standard value after the atbash cipher
@@ -30,9 +31,9 @@ export interface GematriaOptions {
   /** Throw on characters that are not Hebrew, whitespace, or marks. Default false (ignore them). */
   strict?: boolean;
   /**
-   * Milui only: override the letter-name spellings. Spellings vary by
-   * tradition (הא/הי, ואו/ויו, פה/פא, תו/תיו) — see MILUI_SPELLINGS for the
-   * defaults used here.
+   * Milui only: override letter-name spellings, e.g. `{ ה: "הי", ו: "ויו" }`.
+   * Letters not listed keep the defaults in MILUI_SPELLINGS. Spellings vary
+   * by tradition (הא/הי, ואו/ויו, פה/פא, תו/תיו); niqqud in them is ignored.
    */
   spellings?: Readonly<Record<string, string>>;
 }
@@ -70,11 +71,19 @@ export const METHODS: readonly Method[] = [
   "meshulash", "kidmi", "boneeh", "haakhor", "milui", "atbash", "albam",
 ];
 
-// Hebrew points and cantillation marks (niqqud, ta'amim, meteg, etc.)
-const MARKS_RE = /[֑-ׇ]/g;
-// Hebrew punctuation treated as a word separator (maqaf) or ignored entirely
-const MAQAF = "־";
-const IGNORED_PUNCT_RE = /[׳״'"]/g; // geresh, gershayim + ASCII lookalikes
+// Combining marks (niqqud, ta'amim, meteg, CGJ, …) and invisible format
+// characters (RLM/LRM, ZWJ/ZWNJ, bidi embeddings): dropped without breaking
+// the word. Note the Hebrew points block U+0591–U+05C7 also contains
+// punctuation (maqaf U+05BE, paseq U+05C0, sof pasuq U+05C3, nun hafukha
+// U+05C6), which \p{M} does not match — those separate words below.
+const INVISIBLE_RE = /[\p{M}\p{Cf}]/u;
+// Geresh, gershayim + ASCII lookalikes: abbreviation/numeral marks inside a
+// word (רמב״ם), so ignored without breaking the word
+const IN_WORD_PUNCT = "׳״'\"";
+// Hebrew punctuation that separates words: maqaf, paseq, sof pasuq, nun hafukha
+const HEBREW_SEPARATORS = "־׀׃׆";
+// Yiddish ligatures have no Unicode decomposition
+const LIGATURES: Record<string, string> = { װ: "וו", ױ: "וי", ײ: "יי" };
 
 const HEBREW_LETTER_RE = /^[א-ת]$/;
 
@@ -82,29 +91,51 @@ function normalizeFinal(ch: string): string {
   return FINAL_TO_BASE[ch] ?? ch;
 }
 
+function codePoint(ch: string): string {
+  return `U+${ch.codePointAt(0)!.toString(16).toUpperCase().padStart(4, "0")}`;
+}
+
+function assertString(text: unknown): asserts text is string {
+  if (typeof text !== "string") throw new TypeError(`Expected a string, got ${text === null ? "null" : typeof text}`);
+}
+
+function assertMethod(method: unknown): asserts method is Method {
+  if (!(METHODS as readonly unknown[]).includes(method)) {
+    throw new RangeError(`Unknown method "${String(method)}" — expected one of: ${METHODS.join(", ")}`);
+  }
+}
+
 /**
- * Tokenize into words of Hebrew letters (marks stripped, maqaf = separator).
- * Each word keeps the original letters (finals preserved).
+ * Tokenize into words of Hebrew letters. Text is NFKD-normalized first, so
+ * presentation forms (שׁ U+FB2A, wide letters, the אל ligature U+FB4F) become
+ * plain letters. Marks are stripped; whitespace, maqaf and any other
+ * punctuation separate words. Each word keeps the original letters (finals
+ * preserved).
  */
 function tokenize(text: string, strict: boolean): string[][] {
-  const cleaned = text
-    .replace(MARKS_RE, "")
-    .replace(IGNORED_PUNCT_RE, "")
-    .replace(new RegExp(MAQAF, "g"), " ");
+  assertString(text);
   const words: string[][] = [];
   let current: string[] = [];
-  for (const ch of cleaned) {
-    if (HEBREW_LETTER_RE.test(ch)) {
-      current.push(ch);
-    } else if (/\s/.test(ch)) {
-      if (current.length) words.push(current);
-      current = [];
-    } else if (strict) {
-      throw new RangeError(`Non-Hebrew character in strict mode: "${ch}" (U+${ch.codePointAt(0)!.toString(16).toUpperCase().padStart(4, "0")})`);
+  const breakWord = () => {
+    if (current.length) words.push(current);
+    current = [];
+  };
+  for (const raw of text.normalize("NFKD")) {
+    for (const ch of LIGATURES[raw] ?? raw) {
+      if (HEBREW_LETTER_RE.test(ch)) {
+        current.push(ch);
+      } else if (INVISIBLE_RE.test(ch) || IN_WORD_PUNCT.includes(ch)) {
+        // dropped; the word continues
+      } else if (/\s/.test(ch) || HEBREW_SEPARATORS.includes(ch)) {
+        breakWord();
+      } else if (strict) {
+        throw new RangeError(`Non-Hebrew character in strict mode: "${ch}" (${codePoint(ch)})`);
+      } else {
+        breakWord(); // other characters are ignored, but still end the word
+      }
     }
-    // non-Hebrew, non-space characters are ignored when not strict
   }
-  if (current.length) words.push(current);
+  breakWord();
   return words;
 }
 
@@ -181,11 +212,15 @@ function perLetterValue(ch: string, method: Method, opts: GematriaOptions): numb
     case "kidmi":
       return KIDMI[normalizeFinal(ch)]!;
     case "milui": {
-      const spellings = opts.spellings ?? MILUI_SPELLINGS;
-      const name = spellings[normalizeFinal(ch)];
-      if (!name) throw new RangeError(`No milui spelling for letter "${ch}"`);
+      const base = normalizeFinal(ch);
+      const name = opts.spellings?.[base] ?? MILUI_SPELLINGS[base]!;
+      // niqqud allowed in a spelling; anything else but letters is an error
+      const letters = [...String(name).normalize("NFKD")].filter((c) => !INVISIBLE_RE.test(c));
+      if (!letters.length || !letters.every((c) => HEBREW_LETTER_RE.test(c))) {
+        throw new RangeError(`Milui spelling for "${base}" must be Hebrew letters, got "${name}"`);
+      }
       let sum = 0;
-      for (const c of name) sum += standardValue(c);
+      for (const c of letters) sum += standardValue(c);
       return sum;
     }
     case "atbash":
@@ -210,6 +245,7 @@ function perLetterValue(ch: string, method: Method, opts: GematriaOptions): numb
  * ```
  */
 export function gematria(text: string, method: Method = "hechrachi", opts: GematriaOptions = {}): number {
+  assertMethod(method);
   const strict = opts.strict ?? false;
   const words = tokenize(text, strict);
 
@@ -220,11 +256,12 @@ export function gematria(text: string, method: Method = "hechrachi", opts: Gemat
       return digitalRoot(total);
     }
     case "boneeh": {
-      // Running total re-added at each letter: for values v1…vn within the
-      // whole text, sum of prefix sums.
-      let running = 0;
+      // Running total re-added at each letter: for values v1…vn of a word,
+      // the sum of its prefix sums. Restarts each word, like haakhor, so a
+      // phrase's value is the sum of its words' values.
       let total = 0;
       for (const w of words) {
+        let running = 0;
         for (const ch of w) {
           running += standardValue(ch);
           total += running;
@@ -259,13 +296,14 @@ export function letterValues(
   method: Method = "hechrachi",
   opts: GematriaOptions = {},
 ): LetterValue[] {
+  assertMethod(method);
   if (method === "katan-mispari") {
     throw new RangeError('"katan-mispari" reduces the total — no per-letter values');
   }
   const words = tokenize(text, opts.strict ?? false);
   const out: LetterValue[] = [];
-  let running = 0;
   for (const w of words) {
+    let running = 0;
     w.forEach((ch, i) => {
       let value: number;
       if (method === "boneeh") {
@@ -280,4 +318,112 @@ export function letterValues(
     });
   }
   return out;
+}
+
+// ---------------------------------------------------------------------------
+// Hebrew numerals (number ↔ letters, as used for dates, chapters and years)
+// ---------------------------------------------------------------------------
+
+export interface NumeralOptions {
+  /**
+   * How to mark the numeral: "unicode" (default) uses geresh ׳ and gershayim
+   * ״; "ascii" uses ' and "; "none" writes bare letters.
+   */
+  punctuation?: "unicode" | "ascii" | "none";
+}
+
+const ONES = ["", "א", "ב", "ג", "ד", "ה", "ו", "ז", "ח", "ט"];
+const TENS = ["", "י", "כ", "ל", "מ", "נ", "ס", "ע", "פ", "צ"];
+const HUNDREDS = ["", "ק", "ר", "ש", "ת", "תק", "תר", "תש", "תת", "תתק"];
+
+/** Letters for 1–999, with ט״ו / ט״ז in place of the divine-name spellings. */
+function lettersBelow1000(n: number): string {
+  const h = Math.floor(n / 100);
+  const rest = n % 100;
+  const tail = rest === 15 ? "טו" : rest === 16 ? "טז" : TENS[Math.floor(rest / 10)]! + ONES[rest % 10]!;
+  return HUNDREDS[h]! + tail;
+}
+
+/**
+ * Write a positive integer (1 – 999,999) as a Hebrew numeral.
+ *
+ * Gershayim go before the last letter, a single letter takes a geresh, and
+ * 15/16 are written ט״ו/ט״ז. Thousands are written as their own letters
+ * followed by a geresh, as in Hebrew years.
+ *
+ * ```ts
+ * hebrewNumeral(18);    // "י״ח"
+ * hebrewNumeral(15);    // "ט״ו"
+ * hebrewNumeral(5);     // "ה׳"
+ * hebrewNumeral(5786);  // "ה׳תשפ״ו"
+ * hebrewNumeral(786, { punctuation: "ascii" }); // 'תשפ"ו'
+ * ```
+ *
+ * An exact multiple of 1000 (5000 → "ה׳") reads the same as a units numeral;
+ * write such numbers out in words if that matters.
+ */
+export function hebrewNumeral(n: number, opts: NumeralOptions = {}): string {
+  if (!Number.isInteger(n) || n < 1 || n > 999_999) {
+    throw new RangeError(`Hebrew numerals need an integer from 1 to 999999, got ${n}`);
+  }
+  const style = opts.punctuation ?? "unicode";
+  if (style !== "unicode" && style !== "ascii" && style !== "none") {
+    throw new RangeError(`Unknown punctuation "${String(style)}" — expected "unicode", "ascii" or "none"`);
+  }
+  const geresh = style === "unicode" ? "׳" : style === "ascii" ? "'" : "";
+  const gershayim = style === "unicode" ? "״" : style === "ascii" ? '"' : "";
+  const mark = (letters: string) =>
+    letters.length === 1 ? letters + geresh : letters.slice(0, -1) + gershayim + letters.slice(-1);
+
+  const thousands = Math.floor(n / 1000);
+  const rest = n % 1000;
+  let out = thousands ? lettersBelow1000(thousands) + geresh : "";
+  if (rest) out += mark(lettersBelow1000(rest));
+  return out;
+}
+
+const GERESHES = "׳'";
+const GERSHAYIM = "״\"";
+
+/**
+ * Read a Hebrew numeral back into a number — the inverse of hebrewNumeral.
+ *
+ * A geresh followed by more letters marks thousands (ה׳תשפ״ו → 5786); a
+ * trailing geresh or gershayim just marks the numeral. ASCII ' and " are
+ * accepted, niqqud is ignored, and final letters count as their base letters.
+ * Letter order is not enforced (רע and ער both read 270). Throws RangeError
+ * on anything else, including empty input.
+ *
+ * ```ts
+ * parseHebrewNumeral("ט״ו");      // 15
+ * parseHebrewNumeral("ה׳תשפ״ו");  // 5786
+ * parseHebrewNumeral('תשפ"ו');    // 786
+ * ```
+ */
+export function parseHebrewNumeral(text: string): number {
+  assertString(text);
+  const chars = [...text.trim().normalize("NFKD")].filter((c) => !INVISIBLE_RE.test(c));
+  const fail = (why: string): never => {
+    throw new RangeError(`Not a Hebrew numeral: "${text}" (${why})`);
+  };
+  let thousands = 0;
+  let units = 0;
+  let letters = 0;
+  let sawThousands = false;
+  chars.forEach((ch, i) => {
+    if (HEBREW_LETTER_RE.test(ch)) {
+      units += standardValue(ch);
+      letters++;
+    } else if (GERESHES.includes(ch) && i < chars.length - 1) {
+      if (sawThousands || !units) fail("misplaced geresh");
+      thousands = units;
+      units = 0;
+      sawThousands = true;
+    } else if (!(GERESHES.includes(ch) || GERSHAYIM.includes(ch))) {
+      fail(`unexpected character ${codePoint(ch)}`);
+    }
+  });
+  if (!letters) fail("no letters");
+  if (sawThousands && !units) fail("nothing after the thousands geresh");
+  return thousands * 1000 + units;
 }
