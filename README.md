@@ -1,6 +1,6 @@
 # mispar
 
-Hebrew **gematria** with all the classical counting methods — not just the standard count. מספר, "number." Zero dependencies.
+Hebrew **gematria** with all the classical counting methods — not just the standard count — plus Hebrew numerals in both directions. מספר, "number." Zero dependencies.
 
 ```
 npm install mispar
@@ -8,7 +8,7 @@ npm install mispar
 
 ## Why
 
-Every gematria package on npm does one thing: the standard count (and the venerable [`gematriya`](https://www.npmjs.com/package/gematriya) converts numerals ↔ Hebrew letters, which is a different job entirely). But the tradition has *many* counting methods — final letters as 500–900, ordinal values, digit reduction, squares, spelled-out letter names, the atbash and albam ciphers — and they're exactly what gematria tooling needs.
+Most gematria packages on npm do one thing: the standard count. But the tradition has *many* counting methods — final letters as 500–900, ordinal values, digit reduction, squares, spelled-out letter names, the atbash and albam ciphers — and they're exactly what gematria tooling needs.
 
 ```ts
 import { gematria, letterValues, atbash } from "mispar";
@@ -34,20 +34,47 @@ letterValues("שלום");              // [{letter:"ש",value:300}, …] — bui
 | `hechrachi` *(default)* | standard absolute values, א=1 … ת=400 |
 | `gadol` | finals ך ם ן ף ץ count 500–900 |
 | `katan` | each letter reduced to one digit (י=1, ק=1) |
-| `siduri` | ordinal position, א=1 … ת=22 |
+| `siduri` | ordinal position, א=1 … ת=22 (finals count as their base letter; some tables give them 23–27) |
 | `katan-mispari` | digital root of the standard total |
 | `perati` | each letter's value squared |
 | `meshulash` | each letter's value cubed |
 | `kidmi` | cumulative: each letter = sum of all values up to it (י=55) |
-| `boneeh` | building: the running total re-added at every letter |
+| `boneeh` | building: the running total re-added at every letter of a word (אחד = 1+9+13 = 23) |
 | `haakhor` | positional: value × position in the word |
 | `milui` | each letter's spelled-out name (א→אלף=111); spellings overridable |
 | `atbash` | standard value after the א↔ת cipher |
 | `albam` | standard value after the א↔ל cipher |
 
-Also exported: **`atbash(text)`** / **`albam(text)`** as string transforms, **`letterValues(text, method?)`** for per-letter breakdowns, **`METHODS`**, and **`MILUI_SPELLINGS`** (the default naming tradition — variants like הי/ואו/פא/תיו can be passed via `options.spellings`).
+Also exported: **`atbash(text)`** / **`albam(text)`** as string transforms, **`letterValues(text, method?)`** for per-letter breakdowns, **`METHODS`**, and **`MILUI_SPELLINGS`** (the default naming tradition). Pass variants through `options.spellings`, e.g. `{ ה: "הי", ו: "ויו" }`. Letters you don't list keep the defaults.
 
-Niqqud and cantillation are stripped automatically; maqaf (־) separates words; non-Hebrew characters are ignored unless `{ strict: true }`.
+## Hebrew numerals
+
+```ts
+import { hebrewNumeral, parseHebrewNumeral } from "mispar";
+
+hebrewNumeral(18);                              // "י״ח"
+hebrewNumeral(15);                              // "ט״ו" — never יה
+hebrewNumeral(5);                               // "ה׳"
+hebrewNumeral(5786);                            // "ה׳תשפ״ו"
+hebrewNumeral(5786, { punctuation: "ascii" });  // `ה'תשפ"ו`
+hebrewNumeral(786, { punctuation: "none" });    // "תשפו"
+
+parseHebrewNumeral("ה׳תשפ״ו");                  // 5786
+parseHebrewNumeral('תשפ"ו');                    // 786
+```
+
+`hebrewNumeral` takes an integer from 1 to 999,999: gershayim go before the last letter, a single letter takes a geresh, 15 and 16 are ט״ו and ט״ז, and thousands are written as their own letters followed by a geresh. An exact multiple of 1000 (5000 → `ה׳`) reads the same as a units numeral, so `parseHebrewNumeral` reads that back as 5. The parser accepts ׳ ״ or ASCII ' ", ignores niqqud, counts finals as their base letter, and doesn't enforce letter order (ער and רע are both 270).
+
+(`gematria("ט״ו")` is also 15, but `gematria` ignores the thousands geresh, so use `parseHebrewNumeral` for years.)
+
+## Input handling
+
+- Niqqud, cantillation and other combining marks are stripped, as are invisible formatting characters (RLM/LRM, ZWJ/ZWNJ).
+- Text is NFKD-normalized, so presentation forms (שׁ U+FB2A, wide letters, the אל ligature) count as plain letters; the Yiddish ligatures װ ױ ײ count as two letters.
+- Geresh and gershayim (׳ ״, or ASCII ' ") are ignored inside a word, so רמב״ם is one word.
+- Whitespace, maqaf (־), paseq (׀), sof pasuq (׃) and any other punctuation separate words. Only the positional methods (`boneeh`, `haakhor`) and the `atbash`/`albam` string transforms depend on where words break.
+- Other non-Hebrew characters are ignored unless `{ strict: true }`, which throws a `RangeError` on them.
+- An unknown method throws `RangeError`. A non-string input throws `TypeError`.
 
 ## Related
 

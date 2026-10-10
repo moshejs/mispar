@@ -1,7 +1,7 @@
 {
   "name": "mispar",
   "version": "1.0.0",
-  "description": "Hebrew gematria with all the classical methods — hechrachi, gadol, katan, siduri, katan mispari, perati, meshulash, kidmi, bone'eh, ha'akhor, milui, atbash, albam. Zero dependencies.",
+  "description": "Hebrew gematria with all the classical methods — hechrachi, gadol, katan, siduri, katan mispari, perati, meshulash, kidmi, bone'eh, ha'akhor, milui, atbash, albam — plus Hebrew numerals (ה׳תשפ״ו) both ways. Zero dependencies.",
   "keywords": [
     "gematria",
     "gimatria",
@@ -11,6 +11,8 @@
     "albam",
     "milui",
     "numerology",
+    "hebrew-numerals",
+    "gershayim",
     "torah",
     "kabbalah",
     "judaica",
@@ -30,10 +32,16 @@
   "types": "./dist/index.d.ts",
   "exports": {
     ".": {
-      "types": "./dist/index.d.ts",
-      "import": "./dist/index.js",
-      "require": "./dist/index.cjs"
-    }
+      "import": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "require": {
+        "types": "./dist/index.d.cts",
+        "default": "./dist/index.cjs"
+      }
+    },
+    "./package.json": "./package.json"
   },
   "files": [
     "dist"
