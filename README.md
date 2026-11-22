@@ -80,6 +80,10 @@ parseHebrewNumeral('תשפ"ו');                    // 786
 
 By the same author: [Gamatria](https://gamatria.vercel.app) — a gematria search engine over the Tanakh and Mishnah — and a [fixed-income toolkit](https://github.com/moshejs/32nds) if your numerology runs to bonds instead.
 
+Other Hebrew-language projects by the same author, separate from this package:
+- [`dicta-nakdan`](https://github.com/moshejs/dicta-nakdan) — a typed client for Dicta's free Nakdan API that adds niqqud to unpointed Hebrew; `mispar` strips niqqud, so its pointed output counts the same as the plain text.
+- [Hebrabic](https://hebrabic.com) — a web app that teaches Arabic to Hebrew speakers and Hebrew to Arabic speakers.
+
 ## Author
 
 Built by **[Moshe Malka](https://moshemalka.com)** — engineering leader in New York City. Studio work at [Quentin.Code](https://www.quentin.software/).
